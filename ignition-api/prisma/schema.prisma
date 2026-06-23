@@ -102,6 +102,7 @@ model User {
   bio           String?
   avatarUrl     String?
   socialLinks   Json?
+  verifiedStatus Boolean  @default(false)
   passwordHash  String?
   loginAttempts Int       @default(0)
   lockedUntil   DateTime?
@@ -308,6 +309,21 @@ model Newsletter {
   @@index([email])
   @@index([isSubscribed])
   @@map("newsletters")
+}
+
+/// AuditLog model for tracking system actions
+model EmailVerificationToken {
+  id         String   @id @default(uuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
 }
 
 /// AuditLog model for tracking system actions

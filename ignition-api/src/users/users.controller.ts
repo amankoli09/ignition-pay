@@ -10,11 +10,15 @@ import {
   Request,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+
 import { UsersService } from './users.service';
+import { RegisterDto } from './dto/register.dto';
+import { RegisterResponseDto } from './dto/register-response.dto';
+import { ConfirmEmailDto } from './dto/confirm-email.dto';
+import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateKYCStatusDto } from './dto/update-kyc-status.dto';
 import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
-import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
 
@@ -23,9 +27,28 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   /**
+   * POST /users/register
+   * Register with email + password + walletAddress.
+   */
+  @Post('register')
+  async register(
+    @Body() dto: RegisterDto,
+  ): Promise<RegisterResponseDto> {
+    return this.usersService.register(dto.email, dto.walletAddress, dto.password);
+  }
+
+  /**
+   * POST /users/confirm-email
+   * Confirm email using confirmation token.
+   */
+  @Post('confirm-email')
+  async confirmEmail(@Body() dto: ConfirmEmailDto) {
+    return this.usersService.confirmEmail(dto.token);
+  }
+
+  /**
    * POST /users/login
    * Authenticate with email + password, returns access and refresh tokens.
-   * Rate-limited to 10 requests per minute per IP.
    */
   @Post('login')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -58,7 +81,6 @@ export class UsersController {
 
   /**
    * GET /users/profile
-   * Alternate route to retrieve authenticated user's profile
    */
   @UseGuards(JwtAuthGuard)
   @Get('profile')
@@ -68,7 +90,6 @@ export class UsersController {
 
   /**
    * PUT /users/profile
-   * Update authenticated user's profile (supports email, name, phone, preferences)
    */
   @UseGuards(JwtAuthGuard)
   @Put('profile')
@@ -81,7 +102,6 @@ export class UsersController {
 
   /**
    * GET /users/:walletAddress
-   * Retrieve public profile for a user by wallet address
    */
   @Get(':walletAddress')
   async getPublicProfile(
@@ -97,7 +117,6 @@ export class AdminUsersController {
 
   /**
    * PATCH /admin/users/:id/kyc
-   * Update user's KYC status (admin only)
    */
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Patch(':id/kyc')
@@ -113,3 +132,4 @@ export class AdminUsersController {
     );
   }
 }
+
