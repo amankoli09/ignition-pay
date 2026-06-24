@@ -4,18 +4,26 @@ import {
   Body,
   UnauthorizedException,
   BadRequestException,
-  Inject,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
+import { IsNotEmpty, IsString } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserRole } from '@prisma/client';
 
-interface VerifyDto {
+class VerifyDto {
+  @IsString()
+  @IsNotEmpty()
   walletAddress: string;
+
+  @IsString()
+  @IsNotEmpty()
   signedChallenge: string;
+
+  @IsString()
+  @IsNotEmpty()
   challenge: string;
 }
 
