@@ -4,15 +4,18 @@ import {
   BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { Prisma, UserRole } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+import { randomBytes, createHash } from 'crypto';
+
+import { PrismaService } from '../prisma/prisma.service';
 import { LoginResponseDto } from './dto/login.dto';
 import { PasswordActionResponseDto } from './dto/password.dto';
+import { RegisterResponseDto } from './dto/register-response.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
 import { assertStrongPassword } from './password-policy';
 
 interface PasswordSetupInput {
@@ -66,7 +69,6 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // Calculate stats
     const totalRaised = user.campaigns.reduce(
       (sum, campaign) => sum + parseFloat(campaign.raisedAmount.toString()),
       0,
@@ -85,7 +87,7 @@ export class UsersService {
       avatarUrl: user.avatarUrl || undefined,
       role: user.role,
       kycStatus: user.kycStatus,
-      verifiedStatus: user.kycStatus === 'VERIFIED',
+      verifiedStatus: user.verifiedStatus,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       totalRaised,
@@ -109,7 +111,6 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // If email is being changed, ensure it's not already in use
     if (updateDto.email && updateDto.email !== user.email) {
       const existing = await this.prisma.user.findUnique({
         where: { email: updateDto.email },
@@ -119,7 +120,6 @@ export class UsersService {
       }
     }
 
-    // Parse preferences JSON if provided
     const updateData: Prisma.UserUpdateInput = {
       email: updateDto.email ?? user.email,
       name: updateDto.name ?? user.name,
@@ -155,7 +155,6 @@ export class UsersService {
       include: userProfileInclude,
     });
 
-    // Calculate stats
     const totalRaised = updated.campaigns.reduce(
       (sum, campaign) => sum + parseFloat(campaign.raisedAmount.toString()),
       0,
@@ -174,7 +173,7 @@ export class UsersService {
       avatarUrl: updated.avatarUrl || undefined,
       role: updated.role,
       kycStatus: updated.kycStatus,
-      verifiedStatus: updated.kycStatus === 'VERIFIED',
+      verifiedStatus: updated.verifiedStatus,
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
       totalRaised,
@@ -186,9 +185,7 @@ export class UsersService {
   /**
    * Get public profile for a user by wallet address
    */
-  async getPublicProfile(
-    walletAddress: string,
-  ): Promise<PublicUserProfileDto> {
+  async getPublicProfile(walletAddress: string): Promise<PublicUserProfileDto> {
     const user = await this.prisma.user.findUnique({
       where: { walletAddress },
       include: {
@@ -204,7 +201,6 @@ export class UsersService {
       );
     }
 
-    // Calculate stats
     const totalRaised = user.campaigns.reduce(
       (sum, campaign) => sum + parseFloat(campaign.raisedAmount.toString()),
       0,
@@ -214,7 +210,7 @@ export class UsersService {
       displayName: user.displayName || undefined,
       avatarUrl: user.avatarUrl || undefined,
       bio: user.bio || undefined,
-      verifiedStatus: user.kycStatus === 'VERIFIED',
+      verifiedStatus: user.verifiedStatus,
       campaignCount: user.campaigns.length,
       totalRaised,
     };
@@ -236,13 +232,11 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // Update KYC status
     await this.prisma.user.update({
       where: { id: userId },
       data: { kycStatus: status },
     });
 
-    // Log to AuditLog
     await this.prisma.auditLog.create({
       data: {
         userId: adminId,
@@ -257,9 +251,6 @@ export class UsersService {
       },
     });
 
-    // TODO: Send email notification to user
-    // await this.emailService.sendKYCStatusUpdate(user.email, status);
-
     return {
       success: true,
       message: `User KYC status updated to ${status}`,
@@ -268,7 +259,6 @@ export class UsersService {
 
   /**
    * Login with email + password, returning JWT access and refresh tokens.
-   * Enforces account lockout after too many failed attempts.
    */
   async login(email: string, password: string): Promise<LoginResponseDto> {
     const maxAttempts = this.config.get<number>('LOGIN_MAX_ATTEMPTS', 5);
@@ -283,7 +273,6 @@ export class UsersService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Check lockout
     if (user.lockedUntil && user.lockedUntil > new Date()) {
       const retryAfter = Math.ceil(
         (user.lockedUntil.getTime() - Date.now()) / 1000,
@@ -314,7 +303,6 @@ export class UsersService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Reset attempts on success
     await this.prisma.user.update({
       where: { id: user.id },
       data: { loginAttempts: 0, lockedUntil: null },
@@ -419,6 +407,115 @@ export class UsersService {
   }
 
   /**
+   * POST /users/register
+   */
+  async register(
+    email: string,
+    walletAddress: string,
+    password: string,
+  ): Promise<RegisterResponseDto> {
+    const existingEmail = await this.prisma.user.findUnique({
+      where: { email },
+    });
+    if (existingEmail) {
+      throw new BadRequestException('Email already in use');
+    }
+
+    const existingWallet = await this.prisma.user.findUnique({
+      where: { walletAddress },
+    });
+    if (existingWallet) {
+      throw new BadRequestException('Wallet address already in use');
+    }
+
+    const passwordContext = { email, walletAddress };
+    assertStrongPassword(password, passwordContext);
+    const passwordHash = await bcrypt.hash(
+      password,
+      this.getPasswordHashRounds(),
+    );
+
+    const user = await this.prisma.user.create({
+      data: {
+        walletAddress,
+        email,
+        passwordHash,
+        role: 'USER',
+        verifiedStatus: false,
+      },
+    });
+
+    await this.prisma.passwordHistory.create({
+      data: {
+        userId: user.id,
+        passwordHash,
+      },
+    });
+
+    const token = this.generateConfirmationToken();
+    const tokenHash = this.hashToken(token);
+
+    const expiresHours = this.config.get<number>(
+      'EMAIL_TOKEN_EXPIRES_HOURS',
+      24,
+    );
+    const expiresAt = new Date(Date.now() + expiresHours * 60 * 60 * 1000);
+
+    await this.prisma.emailVerificationToken.create({
+      data: {
+        userId: user.id,
+        tokenHash,
+        expiresAt,
+      },
+    });
+
+    return {
+      message: 'Registration successful. Please confirm your email.',
+    };
+  }
+
+  /**
+   * POST /users/confirm-email
+   */
+  async confirmEmail(token: string): Promise<RegisterResponseDto> {
+    if (!token) {
+      throw new BadRequestException('Token is required');
+    }
+
+    const tokenHash = this.hashToken(token);
+
+    const verification = await this.prisma.emailVerificationToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
+    if (!verification || !verification.user) {
+      throw new BadRequestException('Invalid or expired token');
+    }
+
+    if (verification.usedAt) {
+      throw new BadRequestException('Token already used');
+    }
+
+    if (verification.expiresAt <= new Date()) {
+      throw new BadRequestException('Invalid or expired token');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.emailVerificationToken.update({
+        where: { tokenHash },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.user.update({
+        where: { id: verification.userId },
+        data: { verifiedStatus: true },
+      }),
+    ]);
+
+    return { message: 'Email confirmed successfully.' };
+  }
+
+  /**
    * Get or create user by wallet address
    */
   async getOrCreateUser(walletAddress: string, email?: string) {
@@ -435,7 +532,6 @@ export class UsersService {
         },
       });
 
-      // Log user creation in AuditLog
       await this.prisma.auditLog.create({
         data: {
           userId: user.id,
@@ -448,6 +544,55 @@ export class UsersService {
     }
 
     return user;
+  }
+
+  /**
+   * Update user role (admin only)
+   */
+  async updateUserRole(
+    userId: string,
+    role: UserRole,
+    adminId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { role },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminId,
+        action: 'ADMIN_ACTION',
+        resourceType: 'User',
+        resourceId: userId,
+        details: JSON.stringify({
+          action: 'ROLE_UPDATE',
+          previousRole: user.role,
+          newRole: role,
+        }),
+      },
+    });
+
+    return {
+      success: true,
+      message: `User role updated to ${role}`,
+    };
+  }
+
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private generateConfirmationToken(): string {
+    return randomBytes(24).toString('hex');
   }
 
   private async findPasswordUser(input: {

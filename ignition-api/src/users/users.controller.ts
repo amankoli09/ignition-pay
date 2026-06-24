@@ -10,27 +10,66 @@ import {
   Request,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { UserRole } from '@prisma/client';
+
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { UsersService } from './users.service';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { UpdateKYCStatusDto } from './dto/update-kyc-status.dto';
-import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
+import { RegisterDto } from './dto/register.dto';
+import { RegisterResponseDto } from './dto/register-response.dto';
+import { ConfirmEmailDto } from './dto/confirm-email.dto';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import {
   ChangePasswordDto,
   PasswordActionResponseDto,
   SetupPasswordDto,
 } from './dto/password.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateKYCStatusDto } from './dto/update-kyc-status.dto';
+import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
+
+interface AuthenticatedRequest {
+  user: {
+    sub?: string;
+    userId?: string;
+    walletAddress: string;
+  };
+}
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   /**
+   * POST /users/register
+   * Register with email + password + walletAddress.
+   */
+  @Post('register')
+  async register(@Body() dto: RegisterDto): Promise<RegisterResponseDto> {
+    return this.usersService.register(
+      dto.email,
+      dto.walletAddress,
+      dto.password,
+    );
+  }
+
+  /**
+   * POST /users/confirm-email
+   * Confirm email using confirmation token.
+   */
+  @Post('confirm-email')
+  async confirmEmail(
+    @Body() dto: ConfirmEmailDto,
+  ): Promise<RegisterResponseDto> {
+    return this.usersService.confirmEmail(dto.token);
+  }
+
+  /**
    * POST /users/login
    * Authenticate with email + password, returns access and refresh tokens.
-   * Rate-limited to 10 requests per minute per IP.
    */
   @Post('login')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -45,7 +84,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @Post('password/setup')
   async setupPassword(
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
     @Body() dto: SetupPasswordDto,
   ): Promise<PasswordActionResponseDto> {
     return this.usersService.setupPassword({
@@ -62,7 +101,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @Patch('password')
   async changePassword(
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
     @Body() dto: ChangePasswordDto,
   ): Promise<PasswordActionResponseDto> {
     return this.usersService.changePassword({
@@ -79,7 +118,9 @@ export class UsersController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  async getMyProfile(@Request() req: any): Promise<UserProfileDto> {
+  async getMyProfile(
+    @Request() req: AuthenticatedRequest,
+  ): Promise<UserProfileDto> {
     return this.usersService.getMyProfile(req.user.walletAddress);
   }
 
@@ -90,7 +131,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @Patch('me')
   async updateMyProfile(
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
     @Body() updateDto: UpdateUserDto,
   ): Promise<UserProfileDto> {
     return this.usersService.updateMyProfile(req.user.walletAddress, updateDto);
@@ -98,22 +139,22 @@ export class UsersController {
 
   /**
    * GET /users/profile
-   * Alternate route to retrieve authenticated user's profile
    */
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  async getProfile(@Request() req: any): Promise<UserProfileDto> {
+  async getProfile(
+    @Request() req: AuthenticatedRequest,
+  ): Promise<UserProfileDto> {
     return this.usersService.getMyProfile(req.user.walletAddress);
   }
 
   /**
    * PUT /users/profile
-   * Update authenticated user's profile (supports email, name, phone, preferences)
    */
   @UseGuards(JwtAuthGuard)
   @Put('profile')
   async putProfile(
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
     @Body() updateDto: UpdateUserDto,
   ): Promise<UserProfileDto> {
     return this.usersService.updateMyProfile(req.user.walletAddress, updateDto);
@@ -121,7 +162,6 @@ export class UsersController {
 
   /**
    * GET /users/:walletAddress
-   * Retrieve public profile for a user by wallet address
    */
   @Get(':walletAddress')
   async getPublicProfile(
@@ -137,19 +177,34 @@ export class AdminUsersController {
 
   /**
    * PATCH /admin/users/:id/kyc
-   * Update user's KYC status (admin only)
    */
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Patch(':id/kyc')
   async updateKYCStatus(
     @Param('id') userId: string,
     @Body() updateDto: UpdateKYCStatusDto,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ): Promise<{ success: boolean; message: string }> {
     return this.usersService.updateKYCStatus(
       userId,
-      updateDto.status as 'VERIFIED' | 'REJECTED' | 'PENDING',
+      updateDto.status,
       req.user.walletAddress,
     );
+  }
+
+  /**
+   * PATCH /admin/users/:id/role
+   * Update user's role (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Patch(':id/role')
+  async updateUserRole(
+    @Param('id') userId: string,
+    @Body() updateDto: UpdateUserRoleDto,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<{ success: boolean; message: string }> {
+    const adminId = req.user.sub || req.user.userId || req.user.walletAddress;
+    return this.usersService.updateUserRole(userId, updateDto.role, adminId);
   }
 }

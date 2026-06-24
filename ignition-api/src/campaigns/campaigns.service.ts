@@ -1,8 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { BrowseCampaignsQueryDto, BrowseCampaignsResponseDto } from './dto/browse-campaigns.dto';
 
@@ -39,6 +37,8 @@ export class CampaignsService {
     });
 
     return updated;
+  }
+
   /**
    * Browse public campaigns with pagination, filtering, and sorting
    * Excludes DRAFT campaigns from public listing
