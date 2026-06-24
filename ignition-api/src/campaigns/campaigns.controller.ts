@@ -1,16 +1,22 @@
 import {
   Controller,
   Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Req,
   Query,
-  UseInterceptors,
   Inject,
+  BadRequestException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
+import type { Cache } from 'cache-manager';
+import { Request } from 'express';
 import { CampaignsService } from './campaigns.service';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
-import { Body, Post } from '@nestjs/common';
+import { BrowseCampaignsQueryDto, BrowseCampaignsResponseDto } from './dto/browse-campaigns.dto';
 
 const FORBIDDEN_FIELDS = [
   'goalAmount',
@@ -18,11 +24,13 @@ const FORBIDDEN_FIELDS = [
   'milestones',
   'endDate',
 ];
-import { BrowseCampaignsQueryDto, BrowseCampaignsResponseDto } from './dto/browse-campaigns.dto';
 
 @Controller('campaigns')
 export class CampaignsController {
-  constructor(private readonly campaigns: CampaignsService) {}
+  constructor(
+    private readonly campaignsService: CampaignsService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+  ) {}
 
   @Post()
   async create(
@@ -30,7 +38,7 @@ export class CampaignsController {
     @Req() req: Request & { user: any },
   ) {
     const userId = req.user?.sub as string;
-    return this.campaigns.createCampaign(userId, body);
+    return this.campaignsService.createCampaign(userId, body);
   }
 
   @Patch(':id')
@@ -46,10 +54,10 @@ export class CampaignsController {
       throw new BadRequestException(
         `Cannot update protected fields: ${illegal.join(', ')}`,
       );
-  constructor(
-    private readonly campaignsService: CampaignsService,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
-  ) {}
+    }
+    const userId = req.user?.sub as string;
+    return this.campaignsService.updateCampaign(userId, id, body);
+  }
 
   /**
    * GET /campaigns

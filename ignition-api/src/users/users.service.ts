@@ -9,8 +9,9 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { LoginResponseDto } from './dto/login.dto';
+import { UserRole } from '@prisma/client';
 import { RegisterResponseDto } from './dto/register-response.dto';
 import { SessionService } from '../session/session.service';
 
@@ -43,6 +44,7 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    // Calculate stats
     const totalRaised = user.campaigns.reduce(
       (sum, campaign) => sum + parseFloat(campaign.raisedAmount.toString()),
       0,
@@ -61,7 +63,7 @@ export class UsersService {
       avatarUrl: user.avatarUrl || undefined,
       role: user.role,
       kycStatus: user.kycStatus,
-      verifiedStatus: user.verifiedStatus,
+      verifiedStatus: user.kycStatus === 'VERIFIED',
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       totalRaised,
@@ -85,6 +87,16 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    // If email is being changed, ensure it's not already in use
+    if (updateDto.email && updateDto.email !== user.email) {
+      const existing = await this.prisma.user.findUnique({
+        where: { email: updateDto.email },
+      });
+      if (existing) {
+        throw new BadRequestException('Email already in use');
+      }
+    }
+
     // Parse preferences JSON if provided
     let parsedPreferences = user.preferences;
     if (updateDto.preferences) {
@@ -105,7 +117,7 @@ export class UsersService {
         displayName: updateDto.displayName ?? user.displayName,
         bio: updateDto.bio ?? user.bio,
         avatarUrl: updateDto.avatarUrl ?? user.avatarUrl,
-        socialLinks: updateDto.socialLinks ?? user.socialLinks,
+        socialLinks: (updateDto.socialLinks ?? user.socialLinks) as any,
       },
       include: {
         campaigns: {
@@ -133,7 +145,7 @@ export class UsersService {
       avatarUrl: updated.avatarUrl || undefined,
       role: updated.role,
       kycStatus: updated.kycStatus,
-      verifiedStatus: updated.verifiedStatus,
+      verifiedStatus: updated.kycStatus === 'VERIFIED',
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
       totalRaised,
@@ -172,7 +184,7 @@ export class UsersService {
       displayName: user.displayName || undefined,
       avatarUrl: user.avatarUrl || undefined,
       bio: user.bio || undefined,
-      verifiedStatus: user.verifiedStatus,
+      verifiedStatus: user.kycStatus === 'VERIFIED',
       campaignCount: user.campaigns.length,
       totalRaised,
     };
@@ -444,6 +456,49 @@ export class UsersService {
     }
 
     return user;
+  }
+
+  /**
+   * Update user role (admin only)
+   */
+  async updateUserRole(
+    userId: string,
+    role: UserRole,
+    adminId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Update role
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { role },
+    });
+
+    // Log to AuditLog
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminId,
+        action: 'ADMIN_ACTION',
+        resourceType: 'User',
+        resourceId: userId,
+        details: JSON.stringify({
+          action: 'ROLE_UPDATE',
+          previousRole: user.role,
+          newRole: role,
+        }),
+      },
+    });
+
+    return {
+      success: true,
+      message: `User role updated to ${role}`,
+    };
   }
 }
 

@@ -2,6 +2,7 @@ import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { StrKey } from '@stellar/stellar-sdk';
 import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 
 interface ChallengeResponse {
   challenge: string;

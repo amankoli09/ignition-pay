@@ -30,8 +30,11 @@ export class AuthLogoutController {
     if (!req.user) {
       throw new UnauthorizedException('Invalid token');
     }
-
     await this.sessionService.revokeSession(req.user.userId, req.user.sessionId);
     return { message: 'Logged out successfully' };
+    const walletAddress = user.walletAddress;
+    if (walletAddress) {
+      await this.cacheManager.delete(`refresh:${walletAddress}`);
+    }
   }
 }

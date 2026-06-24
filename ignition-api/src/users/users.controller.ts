@@ -21,6 +21,10 @@ import { UpdateKYCStatusDto } from './dto/update-kyc-status.dto';
 import { UserProfileDto, PublicUserProfileDto } from './dto/user-profile.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 
 @Controller('users')
 export class UsersController {
@@ -129,6 +133,26 @@ export class AdminUsersController {
       userId,
       updateDto.status as 'VERIFIED' | 'REJECTED' | 'PENDING',
       req.user.walletAddress,
+    );
+  }
+
+  /**
+   * PATCH /admin/users/:id/role
+   * Update user's role (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Patch(':id/role')
+  async updateUserRole(
+    @Param('id') userId: string,
+    @Body() updateDto: UpdateUserRoleDto,
+    @Request() req: any,
+  ): Promise<{ success: boolean; message: string }> {
+    const adminId = req.user.sub || req.user.userId || req.user.walletAddress;
+    return this.usersService.updateUserRole(
+      userId,
+      updateDto.role,
+      adminId,
     );
   }
 }
