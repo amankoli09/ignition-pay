@@ -9,6 +9,7 @@ import { AuthVerifyController } from './auth-verify.controller';
 import { AuthLogoutController } from './auth-logout.controller';
 import { AuthRefreshController } from './auth-refresh.controller';
 import { AuthTokenService } from './auth-token.service';
+import { AuthChallengeService } from './auth-challenge.service';
 import { JwtMiddleware } from './jwt.middleware';
 
 @Module({
@@ -23,6 +24,7 @@ import { JwtMiddleware } from './jwt.middleware';
     }),
     PrismaModule,
     CacheModule,
+    SessionModule,
   ],
   controllers: [
     AuthChallengeController,
@@ -30,12 +32,7 @@ import { JwtMiddleware } from './jwt.middleware';
     AuthLogoutController,
     AuthRefreshController,
   ],
-  providers: [AuthTokenService],
-  exports: [JwtModule, AuthTokenService],
-    SessionModule,
-  ],
-  controllers: [AuthChallengeController, AuthVerifyController, AuthLogoutController],
-  providers: [JwtMiddleware],
-  exports: [JwtModule, JwtMiddleware],
+  providers: [AuthTokenService, AuthChallengeService, JwtMiddleware],
+  exports: [JwtModule, AuthTokenService, JwtMiddleware],
 })
 export class AuthModule {}
